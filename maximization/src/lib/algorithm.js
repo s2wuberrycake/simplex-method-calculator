@@ -1,5 +1,4 @@
-import { toFraction } from "../lib/helper/fractions"
-
+import { formatBigM } from "./helper/formatDisplayValue"
 
 export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
   const M = 1000
@@ -10,13 +9,12 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
   const basis = []
   const cb = []
 
-  // First pass: count total slack and artificial variables
   let slackCount = 0
   let artificialCount = 0
   constraints.forEach(c => {
     if (c.sign === "<=") slackCount++
     if (c.sign === ">=") {
-      slackCount++  // surplus
+      slackCount++
       artificialCount++
     }
     if (c.sign === "=") artificialCount++
@@ -25,29 +23,19 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
   const totalSlack = slackCount
   const totalArtificial = artificialCount
 
-  // Second pass: build aligned tableau rows
   let slackIndex = 0
   let artificialIndex = 0
 
   constraints.forEach((constraint, idx) => {
     const row = []
 
-    // Original vars
     for (let i = 0; i < numVars; i++) {
       row.push(parseFloat(constraint.coeffs[i]) || 0)
     }
 
-    // Slack/surplus vars
-    for (let i = 0; i < totalSlack; i++) {
-      row.push(0)
-    }
+    for (let i = 0; i < totalSlack; i++) row.push(0)
+    for (let i = 0; i < totalArtificial; i++) row.push(0)
 
-    // Artificial vars
-    for (let i = 0; i < totalArtificial; i++) {
-      row.push(0)
-    }
-
-    // Set appropriate slack/surplus/artificial
     if (constraint.sign === "<=") {
       row[numVars + slackIndex] = 1
       basis.push(`s${slackIndex + 1}`)
@@ -71,29 +59,22 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
       artificialIndex++
     }
 
-    // Z and RHS columns
-    row.push(0) // Z
-    row.push(parseFloat(constraint.rhs) || 0)
-
+    row.push(parseFloat(constraint.rhs) || 0) // Only RHS (no Z column)
     rows.push(row)
   })
 
   const totalCols = numVars + totalSlack + totalArtificial
 
-  // Build cj: original coeffs, then 0 for slack, -M for artificial, then Z and RHS
   const cj = []
   for (let i = 0; i < numVars; i++) cj.push(parseFloat(objectiveCoeffs[i]) || 0)
   for (let i = 0; i < totalSlack; i++) cj.push(0)
   for (let i = 0; i < totalArtificial; i++) cj.push(-M)
-  cj.push(1) // Z
   cj.push(0) // RHS
 
-  // Build headers
   const headers = []
   for (let i = 0; i < numVars; i++) headers.push(`x${i + 1}`)
   for (let i = 0; i < totalSlack; i++) headers.push(`s${i + 1}`)
   for (let i = 0; i < totalArtificial; i++) headers.push(`a${i + 1}`)
-  headers.push(objectiveName)
   headers.push("RHS")
 
   const computeZj = () => {
@@ -111,36 +92,45 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
   const computeZjMinusCj = (zj) =>
     zj.map((z, i) => +(z - cj[i]).toFixed(2))
 
+  const computeTotalZ = () => {
+    let total = 0
+    for (let i = 0; i < rows.length; i++) {
+      total += cb[i] * rows[i][headers.length - 1]
+    }
+    return +total.toFixed(2)
+  }
+
   const snapshot = (pivotCol = null) => {
     const zj = computeZj()
     const zjMinusCj = computeZjMinusCj(zj)
     const qi = rows.map(row => {
-      if (
-        pivotCol === null ||
-        pivotCol < 0 ||
-        pivotCol >= row.length ||
-        row[pivotCol] <= 0
-      ) return null
+      if (pivotCol === null || row[pivotCol] <= 0) return null
       const rhs = row[headers.length - 1]
-      if (isNaN(rhs)) return null
-      return toFraction(rhs / row[pivotCol])
+      return +(rhs / row[pivotCol]).toFixed(6)
     })
-  
+
+    const activeArtificialVars = basis.filter(b => b.startsWith("a"))
+    const displayIndices = headers.map((h, i) => {
+      if (h.startsWith("a") && !activeArtificialVars.includes(h)) return null
+      return i
+    }).filter(i => i !== null)
+
+    const totalZ = computeTotalZ()
+
     tableaux.push({
-      headers,
-      rows: rows.map(r => r.map(n => toFraction(n))),
+      headers: displayIndices.map(i => headers[i]),
+      rows: rows.map(r => displayIndices.map(i => formatBigM(r[i]))),
       basis: [...basis],
-      cb: cb.map(toFraction),
-      zj: zj.map(toFraction),
-      zjMinusCj: zjMinusCj.map(toFraction),
-      qi
+      cb: cb.map(c => formatBigM(c)),
+      zj: displayIndices.map(i => formatBigM(zj[i])),
+      zjMinusCj: displayIndices.map(i => formatBigM(zjMinusCj[i])),
+      qi: qi.map(q => q === null ? null : formatBigM(q)),
+      totalZ: formatBigM(totalZ)
     })
   }
-  
 
   snapshot(null)
 
-  // Iterate
   while (true) {
     const zj = computeZj()
     const zjMinusCj = computeZjMinusCj(zj)
@@ -181,6 +171,5 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
     snapshot(pivotCol)
   }
 
-  console.log("Total tableaux generated:", tableaux.length)
   return tableaux
 }
