@@ -1,3 +1,6 @@
+import { toFraction } from "../lib/helper/fractions"
+
+
 export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
   const M = 1000
   const numVars = objectiveCoeffs.length
@@ -120,19 +123,20 @@ export function solveBigM({ objectiveName, objectiveCoeffs, constraints }) {
       ) return null
       const rhs = row[headers.length - 1]
       if (isNaN(rhs)) return null
-      return +(rhs / row[pivotCol]).toFixed(2)
+      return toFraction(rhs / row[pivotCol])
     })
-
+  
     tableaux.push({
       headers,
-      rows: rows.map(r => r.map(n => +n.toFixed(2))),
+      rows: rows.map(r => r.map(n => toFraction(n))),
       basis: [...basis],
-      cb: [...cb],
-      zj,
-      zjMinusCj,
+      cb: cb.map(toFraction),
+      zj: zj.map(toFraction),
+      zjMinusCj: zjMinusCj.map(toFraction),
       qi
     })
   }
+  
 
   snapshot(null)
 
